@@ -54,7 +54,9 @@ export class Simulator {
   readonly sinkId: string;
   baseTps = 600;
 
-  constructor(now: number, nPeople = 1400, nMerchants = 45) {
+  // Population sized so base-load density stays realistic: at 600 TPS over
+  // 12k accounts, a normal person touches ~3-4 txns per 90s window.
+  constructor(now: number, nPeople = 12_000, nMerchants = 300) {
     for (let i = 0; i < nPeople; i++) {
       const acc = this.newAccount(now - rand(30, 2000) * 86400_000, "person", false);
       this.people.push(acc.id);
@@ -145,12 +147,16 @@ export class Simulator {
           this.schedule(tt + rand(2500, 5000), x.id, pick(cashouts).id, sh[j] * rand(0.96, 1.0), id);
         });
       });
-      // cashouts drain to ATM in chunks
+      // cashouts drain to ATM in chunks over a minute+ (ATM limits are real) —
+      // freezing mid-drain intercepts everything still scheduled
       cashouts.forEach((c) => {
+        let remaining = amount / cashouts.length;
         let tt = t + rand(9000, 12000);
-        for (let k = 0; k < randInt(3, 5); k++) {
-          this.schedule(tt, c.id, this.sinkId, rand(8000, 20000), id);
-          tt += rand(1500, 3500);
+        while (remaining > 4000) {
+          const chunk = Math.min(remaining, rand(7000, 14000));
+          this.schedule(tt, c.id, this.sinkId, chunk, id);
+          remaining -= chunk;
+          tt += rand(4000, 8000);
         }
       });
     }
@@ -170,8 +176,15 @@ export class Simulator {
           t += rand(800, 1600);
         }
       }
-      // exit to cash after the loops
-      this.schedule(t + 1000, loop[0].id, this.sinkId, amount * 0.9, id);
+      // exit to cash in chunks after the loops
+      let remaining = amount * 0.9;
+      let tt = t + 1000;
+      while (remaining > 4000) {
+        const chunk = Math.min(remaining, rand(8000, 15000));
+        this.schedule(tt, loop[0].id, this.sinkId, chunk, id);
+        remaining -= chunk;
+        tt += rand(3500, 7000);
+      }
     }
 
     if (pattern === "smurfing") {
@@ -191,8 +204,16 @@ export class Simulator {
       amount = Math.round(total);
       this.schedule(t + 2000, aggregator.id, cashA.id, total * 0.55, id);
       this.schedule(t + 2600, aggregator.id, cashB.id, total * 0.43, id);
-      this.schedule(t + 6000, cashA.id, this.sinkId, total * 0.5, id);
-      this.schedule(t + 7000, cashB.id, this.sinkId, total * 0.4, id);
+      for (const [cash, share] of [[cashA, 0.5], [cashB, 0.4]] as const) {
+        let remaining = total * share;
+        let tt = t + rand(6000, 8000);
+        while (remaining > 4000) {
+          const chunk = Math.min(remaining, rand(7000, 14000));
+          this.schedule(tt, cash.id, this.sinkId, chunk, id);
+          remaining -= chunk;
+          tt += rand(4000, 8000);
+        }
+      }
     }
 
     const scenario: Scenario = {

@@ -20,7 +20,8 @@ function gatherContext(ring: Ring): RingContext {
   const accounts = ring.accounts.map((id) => {
     const acc = engine.sim.accounts.get(id);
     const w = engine.graph.accounts.get(id);
-    const s = engine.scores.get(id);
+    // peak score, not current — window activity may have expired by report time
+    const s = engine.peakScores.get(id) ?? engine.scores.get(id);
     return {
       vpa: acc?.vpa ?? id,
       score: s?.score ?? 0,

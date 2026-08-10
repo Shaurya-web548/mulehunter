@@ -29,6 +29,9 @@ export class Engine {
   flagged = 0;
   private tpsWindow: number[] = [];
   private alerted = new Set<string>();
+  private everFlagged = new Set<string>();
+  /** highest suspicion score ever seen per account — evidence for reports */
+  peakScores = new Map<string, { score: number; reasons: string[] }>();
   private subscribers = new Set<(snap: Snapshot) => void>();
   private lastDetect = 0;
   private lastSnapshot = 0;
@@ -80,7 +83,11 @@ export class Engine {
       const s = scoreAccount(w, acc, now);
       if (s.score > 0) base.set(w.id, s);
     }
-    this.scores = propagate(base, this.graph);
+    const eligible = (id: string) => this.sim.accounts.get(id)?.kind === "person";
+    this.scores = propagate(base, this.graph, eligible);
+    for (const [id, s] of this.scores) {
+      if (s.score > (this.peakScores.get(id)?.score ?? 0)) this.peakScores.set(id, s);
+    }
 
     // per-account alerts (first crossing only)
     for (const [id, s] of this.scores) {
@@ -91,10 +98,21 @@ export class Engine {
       }
     }
 
-    // ring lifecycle
+    // ring lifecycle — candidates are matched to existing rings by member
+    // overlap so a growing ring keeps its identity tick over tick
     for (const cand of extractRings(this.scores, this.graph)) {
-      const existing = this.rings.get(cand.key);
-      if (existing) {
+      const candSet = new Set(cand.members);
+      let existing: Ring | null = null;
+      let bestOverlap = 0;
+      for (const r of this.rings.values()) {
+        const inter = r.accounts.filter((id) => candSet.has(id)).length;
+        const overlap = inter / Math.min(r.accounts.length, candSet.size);
+        if (overlap > bestOverlap) {
+          bestOverlap = overlap;
+          existing = r;
+        }
+      }
+      if (existing && bestOverlap >= 0.3) {
         if (existing.status === "active") {
           existing.accounts = cand.members;
           existing.score = cand.score;
@@ -112,7 +130,7 @@ export class Engine {
           totalFlow: cand.totalFlow,
           intercepted: 0,
         };
-        this.rings.set(cand.key, ring);
+        this.rings.set(ring.id, ring);
         this.pushAlert(
           "critical",
           `Mule ring detected — ${label(ring.pattern)}`,
@@ -122,17 +140,20 @@ export class Engine {
       }
     }
 
-    // live evaluation against simulator ground truth (recent scenarios only)
+    // cumulative evaluation against simulator ground truth: "did we flag
+    // the mules at any point before cash-out" — the metric a bank cares about
     const trueMules = new Set<string>();
-    for (const scn of this.sim.scenarios) {
-      if (now - scn.startedAt < 150_000) for (const id of scn.muleIds) trueMules.add(id);
-    }
+    for (const scn of this.sim.scenarios) for (const id of scn.muleIds) trueMules.add(id);
     const rings = [...this.rings.values()];
     const ev = evaluate(rings, this.scores, trueMules);
     this.flagged = ev.flagged;
-    if (trueMules.size > 0) {
-      this.precision = ev.precision;
-      this.recall = ev.recall;
+    for (const r of rings) for (const id of r.accounts) this.everFlagged.add(id);
+    for (const [id, s] of this.scores) if (s.score >= ALERT_THRESHOLD) this.everFlagged.add(id);
+    if (trueMules.size > 0 && this.everFlagged.size > 0) {
+      let hits = 0;
+      for (const id of this.everFlagged) if (trueMules.has(id)) hits++;
+      this.precision = hits / this.everFlagged.size;
+      this.recall = hits / trueMules.size;
     }
   }
 

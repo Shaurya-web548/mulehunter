@@ -12,8 +12,11 @@ export function LenisProvider({ children }: { children: React.ReactNode }) {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     gsap.registerPlugin(ScrollTrigger);
-    const lenis = new Lenis({ lerp: 0.12, wheelMultiplier: 1.0 });
+    // anchors: true lets in-page #links scroll smoothly through Lenis instead
+    // of fighting the browser's instant jump
+    const lenis = new Lenis({ lerp: 0.12, wheelMultiplier: 1.0, anchors: true });
     lenis.on("scroll", ScrollTrigger.update);
+    (window as unknown as { __lenis?: Lenis }).__lenis = lenis;
 
     const tick = (time: number) => lenis.raf(time * 1000);
     gsap.ticker.add(tick);

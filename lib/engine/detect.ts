@@ -26,33 +26,48 @@ export function scoreAccount(w: AccountWindow, acc: Account | undefined, now: nu
   const fanOut = distinct(w.outflow);
   const fanIn = distinct(w.inflow);
 
-  // Velocity: everyday accounts do a handful of txns/minute at most
-  if (txnCount >= 8) {
-    score += Math.min(25, (txnCount - 6) * 2.5);
+  // Velocity: everyday accounts touch a handful of txns per window
+  if (txnCount >= 10) {
+    score += Math.min(25, (txnCount - 8) * 2.5);
     reasons.push(`${txnCount} txns in 90s window`);
   }
 
   // Fan-out: money exploding outward to many counterparties
-  if (fanOut >= 4 && outAmt > 30_000) {
+  if (fanOut >= 5 && outAmt > 40_000) {
     score += Math.min(30, fanOut * 5);
     reasons.push(`fan-out to ${fanOut} accounts (₹${Math.round(outAmt).toLocaleString("en-IN")})`);
   }
 
-  // Fan-in: many senders converging (smurfing aggregator shape)
-  if (fanIn >= 6) {
+  // Fan-in: many senders converging with real money (smurfing aggregator)
+  if (fanIn >= 8 && inAmt > 40_000) {
     score += Math.min(30, fanIn * 3.5);
     reasons.push(`fan-in from ${fanIn} senders`);
   }
 
-  // Pass-through: money in ≈ money out, fast — the signature of a mule
-  if (inAmt > 20_000 && outAmt > 0.8 * inAmt && outAmt < 1.1 * inAmt) {
+  // Pass-through: money in ≈ money out, fast — THE signature of a mule.
+  // Weighted so a clean pass-through on a fresh account clears the suspect
+  // bar on its own.
+  if (inAmt > 15_000 && outAmt > 0.8 * inAmt && outAmt < 1.1 * inAmt) {
     const firstIn = w.inflow[0]?.ts ?? now;
     const lastOut = w.outflow[w.outflow.length - 1]?.ts ?? now;
     const holdMs = lastOut - firstIn;
     if (holdMs < 45_000) {
-      score += 35;
+      score += 45;
       reasons.push(`pass-through ${(outAmt / Math.max(inAmt, 1) * 100).toFixed(0)}% in ${Math.max(1, Math.round(holdMs / 1000))}s`);
     }
+  }
+
+  // Loop signature: repeatedly pushing large amounts to the same counterparty
+  // (circular routing sends ~the same money around the ring several times)
+  const outByPeer = new Map<string, number>();
+  for (const x of w.outflow) {
+    if (x.amount > 10_000) outByPeer.set(x.peer, (outByPeer.get(x.peer) ?? 0) + 1);
+  }
+  let maxRepeat = 0;
+  for (const c of outByPeer.values()) maxRepeat = Math.max(maxRepeat, c);
+  if (maxRepeat >= 2) {
+    score += Math.min(20, maxRepeat * 8);
+    reasons.push(`${maxRepeat} repeated high-value transfers to the same account`);
   }
 
   // Structuring: repeated just-under-₹10k transfers
@@ -74,26 +89,52 @@ export function scoreAccount(w: AccountWindow, acc: Account | undefined, now: nu
   return { score: Math.min(100, Math.round(score)), reasons };
 }
 
-/** One decay pass: accounts scoring ≥ ALERT_THRESHOLD bleed suspicion to counterparties */
-export function propagate(base: Map<string, ScoreBreakdown>, graph: TxnGraph): Map<string, ScoreBreakdown> {
-  const eff = new Map(base);
-  for (const [id, s] of base) {
-    if (s.score < ALERT_THRESHOLD) continue;
-    const w = graph.accounts.get(id);
-    if (!w) continue;
-    const peers = new Set([...w.inflow.map((x) => x.peer), ...w.outflow.map((x) => x.peer)]);
-    for (const peer of peers) {
-      const bonus = s.score * 0.35;
-      const cur = eff.get(peer) ?? { score: 0, reasons: [] };
-      if (cur.score < 100) {
-        eff.set(peer, {
-          score: Math.min(100, Math.round(cur.score + bonus)),
-          reasons: cur.reasons.includes("linked to flagged account")
-            ? cur.reasons
-            : [...cur.reasons, "linked to flagged account"],
-        });
+/**
+ * Suspicion propagation with decay: accounts whose *effective* score clears
+ * ALERT_THRESHOLD bleed 0.35× of it to their counterparties. Two rounds, so
+ * suspicion crosses multi-hop layering chains. The bonus is a max (not a
+ * sum), so repeated rounds can't inflate a neighbor's score.
+ */
+export function propagate(
+  base: Map<string, ScoreBreakdown>,
+  graph: TxnGraph,
+  eligible: (id: string) => boolean,
+): Map<string, ScoreBreakdown> {
+  const bonus = new Map<string, number>();
+  const total = (id: string) => (base.get(id)?.score ?? 0) + (bonus.get(id) ?? 0);
+
+  for (let round = 0; round < 2; round++) {
+    const sources = new Set([...base.keys(), ...bonus.keys()]);
+    for (const id of sources) {
+      const t = total(id);
+      if (t < ALERT_THRESHOLD) continue;
+      const w = graph.accounts.get(id);
+      if (!w) continue;
+      // structured-amount edges (just under ₹10k) carry more suspicion:
+      // that's how smurf senders get pulled into the ring, while a fraud
+      // victim (one large transfer to a hot account) correctly stays out
+      const structuredPeers = new Set<string>();
+      const peers = new Set<string>();
+      for (const x of [...w.inflow, ...w.outflow]) {
+        peers.add(x.peer);
+        if (x.amount >= 8800 && x.amount < 10_000) structuredPeers.add(x.peer);
+      }
+      for (const peer of peers) {
+        if (!eligible(peer)) continue;
+        const b = t * (structuredPeers.has(peer) ? 0.65 : 0.35);
+        if (b > (bonus.get(peer) ?? 0)) bonus.set(peer, b);
       }
     }
+  }
+
+  const eff = new Map<string, ScoreBreakdown>();
+  for (const id of new Set([...base.keys(), ...bonus.keys()])) {
+    const b = base.get(id);
+    const extra = bonus.get(id) ?? 0;
+    eff.set(id, {
+      score: Math.min(100, Math.round((b?.score ?? 0) + extra)),
+      reasons: extra > 0 ? [...(b?.reasons ?? []), "linked to flagged account"] : (b?.reasons ?? []),
+    });
   }
   return eff;
 }
@@ -154,8 +195,12 @@ function classify(members: Set<string>, graph: TxnGraph): Pattern | "unknown" {
     maxFanOut = Math.max(maxFanOut, distinct(w.outflow.filter((x) => members.has(x.peer))));
     maxFanIn = Math.max(maxFanIn, distinct(w.inflow.filter((x) => members.has(x.peer))));
   }
-  if (maxFanIn >= 8) return "smurfing";
+  // Order matters: a layering ring's cash-out accounts also show fan-in,
+  // so check the dominant fan-out (the blast radius) first. True smurfing
+  // has a much higher fan-in (20+ senders on one aggregator).
+  if (maxFanIn >= 12) return "smurfing";
   if (maxFanOut >= 4) return "fanout_layering";
+  if (maxFanIn >= 8) return "smurfing";
   return "unknown";
 }
 
@@ -164,7 +209,6 @@ export interface RingCandidate {
   pattern: Pattern | "unknown";
   score: number;
   totalFlow: number;
-  key: string;
 }
 
 export function extractRings(eff: Map<string, ScoreBreakdown>, graph: TxnGraph): RingCandidate[] {
@@ -188,20 +232,19 @@ export function extractRings(eff: Map<string, ScoreBreakdown>, graph: TxnGraph):
   const out: RingCandidate[] = [];
   for (const members of comps.values()) {
     if (members.size < MIN_RING_SIZE) continue;
+    // a ring needs a strong core, not just a cloud of marginal scores
+    if (![...members].some((id) => (eff.get(id)?.score ?? 0) >= ALERT_THRESHOLD)) continue;
     let flow = 0;
     for (const e of graph.edges.values()) {
       if (members.has(e.from) && members.has(e.to)) flow += e.amount;
     }
     const avg =
       [...members].reduce((a, id) => a + (eff.get(id)?.score ?? 0), 0) / members.size;
-    const sorted = [...members].sort();
     out.push({
-      members: sorted,
+      members: [...members].sort(),
       pattern: classify(members, graph),
       score: Math.round(avg),
       totalFlow: Math.round(flow),
-      // stable identity: rings keep their id as they grow tick over tick
-      key: sorted.slice(0, 3).join("|"),
     });
   }
   return out;
