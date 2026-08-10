@@ -1,26 +1,136 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-void: #08090a;
+  --color-panel: #0e1012;
+  --color-ink: #edeef0;
+  --color-muted: #8a8f98;
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-accent: #00e5a0;
+  --color-accent-dim: #00b37e;
+  --color-danger: #ff4d5e;
+  --color-amber: #ffb224;
+  --color-frost: #4cc9f0;
+  --font-display: var(--font-space), system-ui, sans-serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
+  scrollbar-color: #26292d transparent;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-void);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(0, 229, 160, 0.25);
+}
+
+/* ---- glassmorphism ---- */
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.glass-bright {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+/* ---- card hover: lift + glow, transform/opacity + shadow only ---- */
+.lift-card {
+  transition:
+    transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+.lift-card:hover {
+  transform: translateY(-6px) scale(1.015);
+  box-shadow:
+    0 20px 50px -18px rgba(0, 229, 160, 0.22),
+    0 0 0 1px rgba(0, 229, 160, 0.18);
+}
+.lift-card.danger:hover {
+  box-shadow:
+    0 20px 50px -18px rgba(255, 77, 94, 0.28),
+    0 0 0 1px rgba(255, 77, 94, 0.22);
+}
+
+/* ---- infinite marquee (transform only) ---- */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 36s linear infinite;
+}
+.marquee-mask {
+  mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+}
+
+/* ---- gradient orbs (animated via framer, styled here) ---- */
+.orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* ---- pulsing live dot ---- */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+.live-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+/* ---- text gradient ---- */
+.text-glow {
+  background: linear-gradient(120deg, #edeef0 30%, #00e5a0 55%, #edeef0 80%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
+  .live-dot {
+    animation: none;
+  }
+  .lift-card,
+  .lift-card:hover {
+    transition: none;
+    transform: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
 }
