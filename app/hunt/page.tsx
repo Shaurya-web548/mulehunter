@@ -7,6 +7,7 @@ import type { Pattern, Ring, Snapshot } from "@/lib/engine/types";
 import { inr, patternLabel } from "@/lib/format";
 import { ForceGraph } from "@/components/ForceGraph";
 import { EASE } from "@/components/anim";
+import { SessionProvider, SignIn } from "@/components/cases/Session";
 
 const ATTACKS: { pattern: Pattern; name: string; desc: string }[] = [
   { pattern: "fanout_layering", name: "Fan-out layering", desc: "Victim → root → 2 mule layers → cash-out" },
@@ -50,13 +51,15 @@ function RingCard({
         <p className={`font-mono text-xs font-bold uppercase tracking-wider ${frozen ? "text-frost" : "text-danger"}`}>
           {frozen ? "❄ frozen" : "● live ring"} · {patternLabel(ring.pattern)}
         </p>
-        <span className="font-mono text-[11px] text-muted">conf {ring.score}%</span>
+        <span className="font-mono text-[11px] text-muted" title="heuristic ring risk score, not a probability">risk {ring.score}/100</span>
       </div>
       <p className="mt-2 text-sm text-ink">
         {ring.accounts.length} accounts · ₹{inr(ring.totalFlow)} moved in window
       </p>
-      {frozen && ring.intercepted > 0 && (
-        <p className="mt-1 text-sm font-semibold text-frost">₹{inr(ring.intercepted)} intercepted</p>
+      {frozen && (ring.blockedAttempts ?? 0) > 0 && (
+        <p className="mt-1 text-sm font-semibold text-frost">
+          {ring.blockedAttempts} debit attempt{ring.blockedAttempts === 1 ? "" : "s"} rejected · ₹{inr(ring.intercepted)} attempted
+        </p>
       )}
       <div className="mt-3 flex gap-2">
         {!frozen && (
@@ -66,7 +69,7 @@ function RingCard({
             onClick={() => onFreeze(ring.id)}
             className="flex-1 rounded-lg bg-danger px-3 py-2 font-mono text-xs font-bold uppercase tracking-wider text-white transition-colors hover:bg-[#e03d4d] disabled:opacity-50"
           >
-            Freeze ring
+            Freeze ring (simulated)
           </motion.button>
         )}
         <motion.button
@@ -81,11 +84,21 @@ function RingCard({
   );
 }
 
-export default function Hunt() {
+export default function HuntPage() {
+  return (
+    <SessionProvider>
+      <Hunt />
+    </SessionProvider>
+  );
+}
+
+function Hunt() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [connected, setConnected] = useState(false);
   const [cooldown, setCooldown] = useState(false);
   const [freezing, setFreezing] = useState(false);
+  const [freezeError, setFreezeError] = useState<string | null>(null);
+  const [needSignIn, setNeedSignIn] = useState(false);
   const [report, setReport] = useState<{ ring: Ring; text?: string; source?: string } | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
@@ -108,13 +121,27 @@ export default function Hunt() {
     }).catch(() => {});
   }
 
+  // Freezing is an enforcement action: operator session + CSRF header,
+  // durable holds on the server. Show the real result, never assume success.
   async function freeze(ringId: string) {
     setFreezing(true);
-    await fetch("/api/freeze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ringId }),
-    }).catch(() => {});
+    setFreezeError(null);
+    try {
+      const res = await fetch("/api/freeze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-netra-csrf": "1" },
+        body: JSON.stringify({ ringId }),
+      });
+      if (res.status === 401 || res.status === 403) {
+        setNeedSignIn(true);
+        setFreezeError("Freezing requires an operator sign-in.");
+      } else if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setFreezeError(body.message ?? `Freeze failed (${res.status})`);
+      }
+    } catch {
+      setFreezeError("Network error — the ring was not frozen.");
+    }
     setFreezing(false);
   }
 
@@ -147,12 +174,16 @@ export default function Hunt() {
           <span className={`live-dot h-2 w-2 rounded-full ${connected ? "bg-accent" : "bg-danger"}`} />
           {connected ? "engine live" : "connecting"}
         </span>
+        <nav aria-label="Console" className="ml-3 flex gap-1">
+          <Link href="/cases/new" className="rounded-lg px-2.5 py-1 font-mono text-[11px] uppercase tracking-widest text-muted hover:text-ink">Report fraud</Link>
+          <Link href="/cases" className="rounded-lg px-2.5 py-1 font-mono text-[11px] uppercase tracking-widest text-muted hover:text-ink">Cases</Link>
+        </nav>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Tile label="TPS" value={m ? String(m.tps) : "—"} tone="accent" />
           <Tile label="Processed" value={m ? m.processed.toLocaleString("en-IN") : "—"} />
           <Tile label="Precision" value={m ? `${Math.round(m.precision * 100)}%` : "—"} tone="accent" />
           <Tile label="Recall" value={m ? `${Math.round(m.recall * 100)}%` : "—"} tone="accent" />
-          <Tile label="Intercepted" value={m ? `₹${inr(m.intercepted)}` : "—"} tone="frost" />
+          <Tile label="Blocked attempts" value={m ? `${m.blockedAttempts ?? 0} · ₹${inr(m.blockedAttemptedAmount ?? m.intercepted)}` : "—"} tone="frost" />
         </div>
       </header>
 
@@ -178,7 +209,7 @@ export default function Hunt() {
             <span><span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-[#3a3f45]" />normal</span>
             <span><span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-amber" />suspicious</span>
             <span><span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-danger" />ring</span>
-            <span><span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-frost" />frozen</span>
+            <span><span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-frost" />held (any active hold)</span>
           </div>
         </main>
 
@@ -204,9 +235,20 @@ export default function Hunt() {
             </div>
           </section>
 
+          {freezeError && (
+            <div role="alert" className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-ink">
+              {freezeError}
+              {needSignIn && (
+                <div className="mt-2">
+                  <SignIn compact onDone={() => { setNeedSignIn(false); setFreezeError(null); }} />
+                </div>
+              )}
+            </div>
+          )}
+
           <section>
             <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.25em] text-muted">
-              Detected rings {snap && snap.rings.length > 0 && `(${snap.rings.length})`}
+              Suspected rings {snap && snap.rings.length > 0 && `(${snap.rings.length})`}
             </h2>
             <div className="space-y-2">
               <AnimatePresence>

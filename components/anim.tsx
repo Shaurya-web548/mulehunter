@@ -155,11 +155,8 @@ export function CountUp({
   const [value, setValue] = useState(0);
 
   useEffect(() => {
-    if (!inView) return;
-    if (reduced) {
-      setValue(to);
-      return;
-    }
+    // reduced motion renders the final value directly (see `shown`)
+    if (!inView || reduced) return;
     let raf = 0;
     const start = performance.now();
     const step = (t: number) => {
@@ -175,7 +172,7 @@ export function CountUp({
   return (
     <span ref={ref} className={className}>
       {prefix}
-      {value.toLocaleString("en-IN", {
+      {(reduced && inView ? to : value).toLocaleString("en-IN", {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals,
       })}

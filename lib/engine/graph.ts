@@ -1,4 +1,4 @@
-import type { Txn } from "./types";
+import type { Txn } from "./types.ts";
 
 // Sliding-window transaction graph. Keeps ~90s of edges and per-account
 // rolling stats — everything the detector needs, pruned continuously so

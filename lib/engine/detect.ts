@@ -1,5 +1,5 @@
-import type { Account, Pattern, Ring, ScoreBreakdown } from "./types";
-import { TxnGraph, distinct, sum, type AccountWindow } from "./graph";
+import type { Account, Pattern, Ring, ScoreBreakdown } from "./types.ts";
+import { TxnGraph, distinct, sum, type AccountWindow } from "./graph.ts";
 
 // Detection layer — the actual intelligence of the system.
 //

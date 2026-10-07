@@ -68,7 +68,7 @@ function HeroAlertCard() {
           critical · ring detected
         </p>
         <p className="truncate text-sm text-ink">
-          Fan-out layering — 17 accounts, ₹3.86L moved in 90s. Confidence 91%.
+          Fan-out layering — 17 accounts, ₹3.86L moved in 90s. Ring risk score 91/100.
         </p>
       </div>
       <span className="ml-auto shrink-0 rounded-lg border border-danger/40 bg-danger/10 px-3 py-1.5 font-mono text-xs font-semibold text-danger">
@@ -134,6 +134,8 @@ export default function Landing() {
               <a href="#problem" className="transition-colors hover:text-ink">The problem</a>
               <a href="#engine" className="transition-colors hover:text-ink">Engine</a>
               <a href="#stats" className="transition-colors hover:text-ink">Numbers</a>
+              <Link href="/cases/new" className="transition-colors hover:text-ink">Report fraud</Link>
+              <Link href="/cases" className="transition-colors hover:text-ink">Cases</Link>
             </nav>
             <Magnetic>
               <Link

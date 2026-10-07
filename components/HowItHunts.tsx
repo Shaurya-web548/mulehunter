@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
+import { useReducedMotion } from "framer-motion";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 
@@ -61,13 +62,11 @@ const BASE_NODES: [number, number][] = [
 export function HowItHunts() {
   const wrap = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
-  const [reduced, setReduced] = useState(false);
+  // reduced-motion comes from the media query hook (no setState inside the effect)
+  const reduced = useReducedMotion() ?? false;
 
   useLayoutEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setReduced(true);
-      return;
-    }
+    if (reduced) return;
     gsap.registerPlugin(ScrollTrigger);
     const ctx = gsap.context(() => {
       const tl = gsap.timeline({
@@ -95,7 +94,7 @@ export function HowItHunts() {
         .fromTo("#hh-ring", { autoAlpha: 1 }, { autoAlpha: 0.35, duration: 1 }, 3.3);
     }, wrap);
     return () => ctx.revert();
-  }, []);
+  }, [reduced]);
 
   const dot = (x: number, y: number, fill: string, r = 7, extra?: string) => (
     <circle key={`${x}-${y}-${fill}`} cx={x} cy={y} r={r} fill={fill} className={extra} />
@@ -217,7 +216,7 @@ export function HowItHunts() {
                 {FLOW.cash.map(([x, y]) => dot(x, y, "#4cc9f0", 8))}
                 <rect x={122} y={330} width={186} height={34} rx={8} fill="rgba(76,201,240,0.12)" stroke="rgba(76,201,240,0.5)" />
                 <text x={138} y={352} fill="#4cc9f0" fontSize="12" fontFamily="monospace">
-                  ❄ FROZEN — ₹3.4L intercepted
+                  ❄ FROZEN — next cash-out attempts rejected
                 </text>
               </g>
             </svg>

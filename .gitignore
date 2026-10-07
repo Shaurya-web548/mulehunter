@@ -40,3 +40,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local demo database (SQLite + WAL sidecars)
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# isolated verification builds / e2e artefacts
+/.next-*/
+/test-results/
+/playwright-report/
